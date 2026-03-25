@@ -499,7 +499,7 @@ def send_slack_digest(pushed_articles, skipped_count):
     blocks = [
         {
             "type": "header",
-            "text": {"type": "plain_text", "text": f"\U0001f337 Latest Updates \u2014 {today}"},
+            "text": {"type": "plain_text", "text": f"\U0001f337 Latest Trends \u2014 {today}"},
         },
         {
             "type": "section",
@@ -512,7 +512,7 @@ def send_slack_digest(pushed_articles, skipped_count):
         {"type": "divider"},
     ]
 
-    for item in pushed_articles:
+    for item in sorted(pushed_articles, key=lambda x: x["scoring"].get("relevance_score", 0), reverse=True):
         article = item["article"]
         scoring = item["scoring"]
         score = scoring.get("relevance_score", 0)
