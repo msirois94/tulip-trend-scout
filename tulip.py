@@ -30,7 +30,7 @@ LOOKBACK_DAYS = 14
 
 # Minimum relevance score (1–10) for an article to be added
 # Lower = more articles, higher = stricter filtering
-RELEVANCE_THRESHOLD = 3
+RELEVANCE_THRESHOLD = 5
 
 # Which Claude model to use (Haiku is cheapest, Sonnet is smarter)
 CLAUDE_MODEL = "claude-haiku-4-5-20251001"
