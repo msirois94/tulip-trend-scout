@@ -499,7 +499,7 @@ def send_slack_digest(pushed_articles, skipped_count):
     blocks = [
         {
             "type": "header",
-            "text": {"type": "plain_text", "text": f"\U0001f337 Latest Trend Updates \u2014 {today}"},
+            "text": {"type": "plain_text", "text": f"\U0001f337 Latest Updates \u2014 {today}"},
         },
         {
             "type": "section",
