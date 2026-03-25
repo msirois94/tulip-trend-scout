@@ -546,7 +546,7 @@ def send_slack_digest(pushed_articles, skipped_count):
         "type": "context",
         "elements": [{
             "type": "mrkdwn",
-            "text": "Weekly review every Monday 7am AEST \u00b7 All entries added to Google Sheet",
+            "text": "Weekly review every Monday 7am AEST \u00b7 All entries added to <https://docs.google.com/spreadsheets/d/1FZTPEA9Qw9gJFBr4t5gK_06FrIOX0iVWr0qJWjQ61pA/edit?usp=sharing|Google Sheet>",
         }],
     })
 
