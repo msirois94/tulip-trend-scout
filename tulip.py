@@ -122,6 +122,7 @@ TOPIC_TAGS = [
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 NOTION_TOKEN = os.environ.get("NOTION_TOKEN", "")
 NOTION_DATABASE_ID = os.environ.get("NOTION_DATABASE_ID", "")
+SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL", "")
 
 # File to track which articles we've already processed
 SEEN_ARTICLES_FILE = "seen_articles.json"
@@ -331,10 +332,104 @@ def push_to_notion(article, scoring):
         return False
 
 
+def send_slack_digest(pushed_articles, skipped_count):
+    """
+    Send a formatted digest to Slack summarising what Tulip found today.
+    Each article shows its score, tags, key stat, and a link.
+    Only sends if there are articles to report (no spam on quiet days).
+    """
+    if not SLACK_WEBHOOK_URL:
+        print("  Slack webhook not configured — skipping notification")
+        return
+
+    if not pushed_articles and skipped_count == 0:
+        print("  No new articles today — skipping Slack notification")
+        return
+
+    today = datetime.now().strftime("%A %-d %B %Y")
+
+    # Build the message blocks
+    blocks = [
+        {
+            "type": "header",
+            "text": {
+                "type": "plain_text",
+                "text": f"🌷 Tulip Trend Scout — {today}",
+            },
+        },
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"*{len(pushed_articles)} new article{'s' if len(pushed_articles) != 1 else ''}* added to the Research Hub"
+                        + (f" · {skipped_count} below threshold" if skipped_count > 0 else ""),
+            },
+        },
+        {"type": "divider"},
+    ]
+
+    # Add a block for each pushed article
+    for item in pushed_articles:
+        article = item["article"]
+        scoring = item["scoring"]
+        score = scoring.get("relevance_score", 0)
+        tags = ", ".join(scoring.get("topic_tags", []))
+        title = scoring.get("suggested_title", article["title"])
+        key_stat = scoring.get("key_quote_or_stat", "")
+        why = scoring.get("why_relevant", "")
+
+        # Score emoji — visual at-a-glance indicator
+        if score >= 9:
+            score_emoji = "🔥"
+        elif score >= 7:
+            score_emoji = "✅"
+        else:
+            score_emoji = "📄"
+
+        blocks.append({
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f"{score_emoji} *<{article['url']}|{title}>*\n"
+                    f"Score: *{score}/10* · {tags}\n"
+                    f"_{key_stat}_\n"
+                    f"→ {why}"
+                ),
+            },
+        })
+
+    # Add a footer
+    blocks.append({"type": "divider"})
+    blocks.append({
+        "type": "context",
+        "elements": [
+            {
+                "type": "mrkdwn",
+                "text": "Tulip runs daily at 7am AEST · All entries added to Notion with Newsletter Ready unchecked · React with 👍 to flag for Matty",
+            }
+        ],
+    })
+
+    try:
+        response = requests.post(
+            SLACK_WEBHOOK_URL,
+            json={"blocks": blocks},
+            timeout=15,
+        )
+        if response.status_code == 200:
+            print("  Slack digest sent successfully")
+        else:
+            print(f"  Slack error {response.status_code}: {response.text[:200]}")
+    except Exception as e:
+        print(f"  Error sending Slack digest: {e}")
+
+
 def main():
     """
     Main function — runs once per execution.
-    Checks all sources, scores new articles, pushes good ones to Notion.
+    Checks all sources, scores new articles, pushes good ones to Notion,
+    then sends a Slack digest with everything it found.
     """
     print("=" * 60)
     print(f"TULIP TREND SCOUT — {datetime.now().strftime('%Y-%m-%d %H:%M')}")
@@ -356,6 +451,7 @@ def main():
     new_count = 0
     pushed_count = 0
     skipped_count = 0
+    pushed_articles = []  # Collect these for the Slack digest
 
     # Check each source
     for source in SOURCES:
@@ -396,6 +492,7 @@ def main():
                 success = push_to_notion(article, scoring)
                 if success:
                     pushed_count += 1
+                    pushed_articles.append({"article": article, "scoring": scoring})
                     print(f"  -> Pushed to Notion")
                 else:
                     print(f"  -> Failed to push to Notion")
@@ -408,6 +505,10 @@ def main():
 
     # Save what we've seen
     save_seen_articles(seen)
+
+    # Send Slack digest
+    print(f"\nSending Slack digest...")
+    send_slack_digest(pushed_articles, skipped_count)
 
     # Summary
     print(f"\n{'=' * 60}")
