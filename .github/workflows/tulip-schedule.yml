@@ -14,7 +14,7 @@
 #   '0 9 * * *'   = 7:00 PM AEST daily
 # ============================================================
 
-name: Tulip Trend Scout
+name: Tulip the Trend Scout
 
 on:
   # Run on a daily schedule
