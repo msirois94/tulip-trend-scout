@@ -49,9 +49,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: seen_articles.json
-          key: seen-articles-v2-${{ github.run_number }}
+          key: seen-articles-v3-${{ github.run_number }}
           restore-keys: |
-            seen-articles-v2-
+            seen-articles-v3-
 
       # Step 5: Run Tulip
       - name: Run Tulip Trend Scout
