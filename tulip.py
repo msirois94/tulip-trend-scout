@@ -526,12 +526,12 @@ def send_slack_digest(pushed_articles, skipped_count):
         print("  No new articles — skipping Slack notification")
         return
 
-    today = datetime.now().strftime("%A %-d %B %Y")
+    today = datetime.now().strftime("%-d %B %Y")
 
     blocks = [
         {
             "type": "header",
-            "text": {"type": "plain_text", "text": f"🌷 Tulip Trend Scout — {today}"},
+            "text": {"type": "plain_text", "text": f"🌷 Latest Trend Updates — {today}"},
         },
         {
             "type": "section",
