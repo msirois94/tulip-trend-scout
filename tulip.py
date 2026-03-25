@@ -54,7 +54,7 @@ MAX_ARTICLES_PER_RUN = 30
 # ╚══════════════════════════════════════════════════════════════════╝
 
 SOURCES = [
-    # ── Original Pontil Research Hub sources ──────────────────────
+    # ── Core Pontil Research Hub sources ──────────────────────────
     {
         "name": "The Pragmatic Engineer",
         "url": "https://newsletter.pragmaticengineer.com",
@@ -98,24 +98,56 @@ SOURCES = [
         "content_type": "Industry Articles & News",
     },
 
-    # ── High-volume AI & infrastructure sources ───────────────────
+    # ── API infrastructure & developer tooling ────────────────────
     {
-        "name": "TechCrunch AI",
-        "url": "https://techcrunch.com/category/artificial-intelligence/",
-        "feed_url": "https://techcrunch.com/category/artificial-intelligence/feed/",
+        "name": "Postman Blog",
+        "url": "https://blog.postman.com",
+        "feed_url": "https://blog.postman.com/feed/",
         "content_type": "Industry Articles & News",
     },
     {
-        "name": "The New Stack",
-        "url": "https://thenewstack.io",
-        "feed_url": "https://thenewstack.io/feed/",
+        "name": "Kong Blog",
+        "url": "https://konghq.com/blog",
+        "feed_url": "https://konghq.com/blog/feed",
         "content_type": "Industry Articles & News",
     },
     {
-        "name": "InfoQ — AI/ML & Data Engineering",
-        "url": "https://www.infoq.com/ai-ml-data-eng/",
-        "feed_url": "https://feed.infoq.com/ai-ml-data-eng/",
+        "name": "Tyk API Gateway Blog",
+        "url": "https://tyk.io/blog",
+        "feed_url": "https://tyk.io/feed",
         "content_type": "Industry Articles & News",
+    },
+    {
+        "name": "Nordic APIs",
+        "url": "https://nordicapis.com/blog",
+        "feed_url": "https://nordicapis.com/feed",
+        "content_type": "Industry Articles & News",
+    },
+    {
+        "name": "API Security",
+        "url": "https://apisecurity.io",
+        "feed_url": "https://apisecurity.io/feed/index.xml",
+        "content_type": "Industry Articles & News",
+    },
+    {
+        "name": "Moesif Blog — API Analytics",
+        "url": "https://www.moesif.com/blog",
+        "feed_url": "https://www.moesif.com/blog/feed.xml",
+        "content_type": "Industry Articles & News",
+    },
+
+    # ── Agent platforms & competitors ─────────────────────────────
+    {
+        "name": "Membrane Blog",
+        "url": "https://www.membrane.io/blog",
+        "feed_url": "https://www.membrane.io/blog/rss.xml",
+        "content_type": "Competitor Update",
+    },
+    {
+        "name": "Zapier Engineering Blog",
+        "url": "https://zapier.com/engineering",
+        "feed_url": "https://zapier.com/engineering/feeds/latest/",
+        "content_type": "Competitor Update",
     },
     {
         "name": "Simon Willison's Weblog",
@@ -123,26 +155,8 @@ SOURCES = [
         "feed_url": "https://simonwillison.net/atom/everything/",
         "content_type": "Industry Articles & News",
     },
-    {
-        "name": "MIT Technology Review — AI",
-        "url": "https://www.technologyreview.com/topic/artificial-intelligence/",
-        "feed_url": "https://www.technologyreview.com/topic/artificial-intelligence/feed/",
-        "content_type": "Industry Articles & News",
-    },
-    {
-        "name": "VentureBeat AI",
-        "url": "https://venturebeat.com/category/ai/",
-        "feed_url": "https://venturebeat.com/category/ai/feed/",
-        "content_type": "Industry Articles & News",
-    },
-    {
-        "name": "The Verge — AI",
-        "url": "https://www.theverge.com/ai-artificial-intelligence",
-        "feed_url": "https://www.theverge.com/rss/ai-artificial-intelligence/index.xml",
-        "content_type": "Industry Articles & News",
-    },
 
-    # ── AI vendor blogs (ecosystem moves) ─────────────────────────
+    # ── AI vendor blogs (agent & API announcements) ───────────────
     {
         "name": "Anthropic Blog",
         "url": "https://www.anthropic.com/news",
@@ -155,64 +169,57 @@ SOURCES = [
         "feed_url": "https://openai.com/blog/rss.xml",
         "content_type": "Industry Articles & News",
     },
+
+    # ── Dev & infrastructure publications ─────────────────────────
     {
-        "name": "Google AI Blog",
-        "url": "https://blog.google/technology/ai/",
-        "feed_url": "https://blog.google/technology/ai/rss/",
+        "name": "The New Stack",
+        "url": "https://thenewstack.io",
+        "feed_url": "https://thenewstack.io/feed/",
+        "content_type": "Industry Articles & News",
+    },
+    {
+        "name": "InfoQ — AI/ML & Data Engineering",
+        "url": "https://www.infoq.com/ai-ml-data-eng/",
+        "feed_url": "https://feed.infoq.com/ai-ml-data-eng/",
         "content_type": "Industry Articles & News",
     },
 
-    # ── API infrastructure & competitor sources ───────────────────
-    {
-        "name": "Postman Blog",
-        "url": "https://blog.postman.com",
-        "feed_url": "https://blog.postman.com/feed/",
-        "content_type": "Industry Articles & News",
-    },
-    {
-        "name": "Membrane Blog",
-        "url": "https://www.membrane.io/blog",
-        "feed_url": "https://www.membrane.io/blog/rss.xml",
-        "content_type": "Competitor Update",
-    },
-    {
-        "name": "Kong Blog",
-        "url": "https://konghq.com/blog",
-        "feed_url": "https://konghq.com/blog/feed",
-        "content_type": "Industry Articles & News",
-    },
-    {
-        "name": "Zapier Engineering Blog",
-        "url": "https://zapier.com/engineering",
-        "feed_url": "https://zapier.com/engineering/feeds/latest/",
-        "content_type": "Competitor Update",
-    },
-
-    # ── Hacker News — filtered by keyword ─────────────────────────
-    # Separate feeds because HN RSS treats multi-word queries as AND.
-    # Lower point thresholds = more results.
+    # ── Hacker News — tightly filtered by keyword ─────────────────
+    # Lower point thresholds for niche topics.
     {
         "name": "Hacker News — AI Agents",
         "url": "https://news.ycombinator.com",
-        "feed_url": "https://hnrss.org/newest?q=AI+agent&points=30",
+        "feed_url": "https://hnrss.org/newest?q=AI+agent&points=10",
         "content_type": "Industry Articles & News",
     },
     {
-        "name": "Hacker News — MCP Protocol",
+        "name": "Hacker News — MCP",
         "url": "https://news.ycombinator.com",
-        "feed_url": "https://hnrss.org/newest?q=MCP+protocol&points=20",
+        "feed_url": "https://hnrss.org/newest?q=MCP&points=10",
         "content_type": "Industry Articles & News",
     },
     {
         "name": "Hacker News — API Gateway",
         "url": "https://news.ycombinator.com",
-        "feed_url": "https://hnrss.org/newest?q=API+gateway&points=20",
+        "feed_url": "https://hnrss.org/newest?q=API+gateway&points=10",
         "content_type": "Industry Articles & News",
     },
     {
-        "name": "Hacker News — iPaaS Integration",
+        "name": "Hacker News — Agentic AI",
         "url": "https://news.ycombinator.com",
-        "feed_url": "https://hnrss.org/newest?q=iPaaS+integration&points=10",
+        "feed_url": "https://hnrss.org/newest?q=agentic&points=10",
+        "content_type": "Industry Articles & News",
+    },
+    {
+        "name": "Hacker News — iPaaS",
+        "url": "https://news.ycombinator.com",
+        "feed_url": "https://hnrss.org/newest?q=iPaaS&points=5",
+        "content_type": "Industry Articles & News",
+    },
+    {
+        "name": "Hacker News — Tool Use LLM",
+        "url": "https://news.ycombinator.com",
+        "feed_url": "https://hnrss.org/newest?q=tool+use+LLM&points=10",
         "content_type": "Industry Articles & News",
     },
 ]
