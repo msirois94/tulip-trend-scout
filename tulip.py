@@ -1,15 +1,11 @@
 """
 TULIP — Trend Scout for Pontil
 ===============================
-This script runs daily via GitHub Actions. It:
+This script runs weekly via GitHub Actions. It:
 1. Checks your curated source list for new articles (via RSS feeds)
 2. Sends each new article to Claude for relevance scoring
-3. Pushes high-scoring entries into your Notion Research Hub
+3. Logs results to a Google Sheet
 4. Sends a Slack digest summarising what it found
-
-You don't need to understand the code — just follow the setup steps
-in the README. If you want to add a new source, scroll down to the
-SOURCES section below and copy the pattern.
 """
 
 import os
@@ -18,11 +14,11 @@ import hashlib
 import time
 from datetime import datetime, timedelta
 
-# These libraries get installed automatically by GitHub Actions
-# (listed in requirements.txt)
 import feedparser
 import requests
 from bs4 import BeautifulSoup
+import gspread
+from google.oauth2.service_account import Credentials
 
 
 # ╔══════════════════════════════════════════════════════════════════╗
@@ -32,9 +28,9 @@ from bs4 import BeautifulSoup
 # How many days back to look for new articles (on each run)
 LOOKBACK_DAYS = 14
 
-# Minimum relevance score (1–10) for an article to be pushed to Notion
+# Minimum relevance score (1–10) for an article to be added
 # Lower = more articles, higher = stricter filtering
-RELEVANCE_THRESHOLD = 1
+RELEVANCE_THRESHOLD = 3
 
 # Which Claude model to use (Haiku is cheapest, Sonnet is smarter)
 CLAUDE_MODEL = "claude-haiku-4-5-20251001"
@@ -185,7 +181,6 @@ SOURCES = [
     },
 
     # ── Hacker News — tightly filtered by keyword ─────────────────
-    # Lower point thresholds for niche topics.
     {
         "name": "Hacker News — AI Agents",
         "url": "https://news.ycombinator.com",
@@ -226,8 +221,7 @@ SOURCES = [
 
 
 # ╔══════════════════════════════════════════════════════════════════╗
-# ║  TOPIC TAGS — These match your Notion Research Hub exactly       ║
-# ║  Don't change these unless you also update your Notion database  ║
+# ║  TOPIC TAGS — These match your Research Hub categories           ║
 # ╚══════════════════════════════════════════════════════════════════╝
 
 TOPIC_TAGS = [
@@ -248,16 +242,13 @@ TOPIC_TAGS = [
 # ║  INTERNAL CODE — You don't need to touch anything below here     ║
 # ╚══════════════════════════════════════════════════════════════════╝
 
-# Load secrets from environment variables (set in GitHub Secrets)
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-NOTION_TOKEN = os.environ.get("NOTION_TOKEN", "")
-NOTION_DATABASE_ID = os.environ.get("NOTION_DATABASE_ID", "")
 SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL", "")
+GOOGLE_SHEET_ID = os.environ.get("GOOGLE_SHEET_ID", "")
+GOOGLE_SHEETS_CREDENTIALS = os.environ.get("GOOGLE_SHEETS_CREDENTIALS", "")
 
-# File to track which articles we've already processed
 SEEN_ARTICLES_FILE = "seen_articles.json"
 
-# Fake a normal browser so feeds don't block us
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
                   "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -266,7 +257,6 @@ HEADERS = {
 
 
 def load_seen_articles():
-    """Load the list of articles we've already processed."""
     if os.path.exists(SEEN_ARTICLES_FILE):
         with open(SEEN_ARTICLES_FILE, "r") as f:
             return json.load(f)
@@ -274,21 +264,35 @@ def load_seen_articles():
 
 
 def save_seen_articles(seen):
-    """Save the list of processed articles so we don't duplicate them."""
     with open(SEEN_ARTICLES_FILE, "w") as f:
         json.dump(seen, f, indent=2)
 
 
 def make_article_id(url):
-    """Create a short unique ID from a URL."""
     return hashlib.md5(url.encode()).hexdigest()[:12]
 
 
+def get_google_sheet():
+    """Connect to Google Sheets using service account credentials."""
+    try:
+        creds_dict = json.loads(GOOGLE_SHEETS_CREDENTIALS)
+        creds = Credentials.from_service_account_info(
+            creds_dict,
+            scopes=[
+                "https://www.googleapis.com/auth/spreadsheets",
+                "https://www.googleapis.com/auth/drive",
+            ],
+        )
+        client = gspread.authorize(creds)
+        sheet = client.open_by_key(GOOGLE_SHEET_ID).sheet1
+        print("  Google Sheet connected successfully")
+        return sheet
+    except Exception as e:
+        print(f"  Google Sheet connection error: {type(e).__name__}: {str(e)[:150]}")
+        return None
+
+
 def get_entry_date(entry):
-    """
-    Try every common date field to extract a publish date.
-    Returns a datetime or None if no date can be determined.
-    """
     for attr in ["published_parsed", "updated_parsed", "created_parsed"]:
         parsed = getattr(entry, attr, None)
         if parsed:
@@ -319,10 +323,6 @@ def get_entry_date(entry):
 
 
 def fetch_articles_from_rss(source):
-    """
-    Check an RSS feed for new articles.
-    Now with detailed logging and forgiving date handling.
-    """
     articles = []
     feed_url = source.get("feed_url")
 
@@ -331,7 +331,6 @@ def fetch_articles_from_rss(source):
         return articles
 
     try:
-        # Fetch with browser headers (some feeds block default user-agents)
         response = requests.get(feed_url, headers=HEADERS, timeout=15)
         print(f"  HTTP {response.status_code} | {len(response.content)} bytes")
 
@@ -370,7 +369,6 @@ def fetch_articles_from_rss(source):
                     too_old += 1
                     continue
             else:
-                # No date — include it anyway, better safe than sorry
                 no_date += 1
 
             summary = ""
@@ -406,16 +404,13 @@ def fetch_articles_from_rss(source):
 
 
 def score_with_claude(article):
-    """
-    Send an article to Claude for relevance scoring.
-    """
     prompt = f"""You are a research assistant for Pontil, a B2B SaaS infrastructure company.
 
 Pontil builds a Generated API Gateway that makes SaaS platforms fully operable by AI agents.
-The core problem: SaaS platforms expose only 2–5% of capability via public APIs. AI agents need 100%.
-Pontil scans UIs, private APIs, and legacy services to generate a secure API layer — closing the gap.
+The core problem: SaaS platforms expose only 2-5% of capability via public APIs. AI agents need 100%.
+Pontil scans UIs, private APIs, and legacy services to generate a secure API layer - closing the gap.
 
-Score this article's relevance to Pontil (1–10) and extract key information.
+Score this article's relevance to Pontil (1-10) and extract key information.
 
 Article title: {article['title']}
 Source: {article['source_name']}
@@ -426,15 +421,15 @@ Respond with ONLY valid JSON (no markdown, no backticks, no explanation) in this
 {{
   "relevance_score": 7,
   "topic_tags": ["Agent Accessibility", "API Infrastructure"],
-  "key_quote_or_stat": "One sentence — the single most useful fact, quote, or statistic from this article.",
-  "why_relevant": "One sentence — what this means for Pontil's positioning, content, or sales outreach.",
+  "key_quote_or_stat": "One sentence - the single most useful fact, quote, or statistic from this article.",
+  "why_relevant": "One sentence - what this means for Pontil's positioning, content, or sales outreach.",
   "suggested_title": "A clean, short title for the Research Hub entry."
 }}
 
 Topic tags must be chosen from this list only:
 {json.dumps(TOPIC_TAGS)}
 
-Pick the top 2–3 most relevant tags. Be selective — don't tag everything."""
+Pick the top 2-3 most relevant tags. Be selective."""
 
     try:
         response = requests.post(
@@ -463,68 +458,34 @@ Pick the top 2–3 most relevant tags. Be selective — don't tag everything."""
         return result
 
     except json.JSONDecodeError as e:
-        print(f"  Could not parse Claude's response as JSON: {e}")
+        print(f"  Could not parse Claude response: {e}")
         return None
     except Exception as e:
-        print(f"  Error calling Claude API: {e}")
+        print(f"  Claude error: {e}")
         return None
 
 
-def push_to_notion(article, scoring):
-    """
-    Create a new entry in the Notion Research Hub database.
-    """
-    tags = [{"name": tag} for tag in scoring.get("topic_tags", [])]
-
-    properties = {
-        "Title": {
-            "title": [{"text": {"content": scoring.get("suggested_title", article["title"])}}]
-        },
-        "URL": {"url": article["url"]},
-        "Content Type": {"select": {"name": article["content_type"]}},
-        "Topic Tag": {"multi_select": tags},
-        "Who Added": {"rich_text": [{"text": {"content": "Tulip (auto)"}}]},
-        "Date Added": {"date": {"start": datetime.now().strftime("%Y-%m-%d")}},
-        "Newsletter Ready": {"checkbox": False},
-        "Key Quote / Stat": {
-            "rich_text": [{"text": {"content": scoring.get("key_quote_or_stat", "")[:2000]}}]
-        },
-        "Why It's Relevant": {
-            "rich_text": [{"text": {"content": scoring.get("why_relevant", "")[:2000]}}]
-        },
-    }
-
+def push_to_google_sheet(sheet, article, scoring):
+    """Add a row to the Google Sheet."""
     try:
-        response = requests.post(
-            "https://api.notion.com/v1/pages",
-            headers={
-                "Authorization": f"Bearer {NOTION_TOKEN}",
-                "Content-Type": "application/json",
-                "Notion-Version": "2022-06-28",
-            },
-            json={
-                "parent": {"database_id": NOTION_DATABASE_ID},
-                "properties": properties,
-            },
-            timeout=30,
-        )
-
-        if response.status_code == 200:
-            return True
-        else:
-            print(f"  Notion error {response.status_code}: {response.text[:300]}")
-            return False
-
+        row = [
+            datetime.now().strftime("%Y-%m-%d"),
+            scoring.get("suggested_title", article["title"]),
+            article["url"],
+            article["source_name"],
+            scoring.get("relevance_score", 0),
+            ", ".join(scoring.get("topic_tags", [])),
+            scoring.get("key_quote_or_stat", ""),
+            scoring.get("why_relevant", ""),
+        ]
+        sheet.append_row(row, value_input_option="USER_ENTERED")
+        return True
     except Exception as e:
-        print(f"  Error pushing to Notion: {e}")
+        print(f"  Google Sheet error: {type(e).__name__}: {str(e)[:150]}")
         return False
 
 
 def send_slack_digest(pushed_articles, skipped_count):
-    """
-    Send a formatted digest to Slack.
-    Only sends if there are articles to report.
-    """
     if not SLACK_WEBHOOK_URL:
         print("  Slack webhook not configured — skipping")
         return
@@ -538,14 +499,14 @@ def send_slack_digest(pushed_articles, skipped_count):
     blocks = [
         {
             "type": "header",
-            "text": {"type": "plain_text", "text": f"🌷 Latest Trend Updates — {today}"},
+            "text": {"type": "plain_text", "text": f"\U0001f337 Latest Trend Updates \u2014 {today}"},
         },
         {
             "type": "section",
             "text": {
                 "type": "mrkdwn",
-                "text": f"*{len(pushed_articles)} new article{'s' if len(pushed_articles) != 1 else ''}* added to the Research Hub"
-                        + (f" · {skipped_count} below threshold" if skipped_count > 0 else ""),
+                "text": f"*{len(pushed_articles)} new article{'s' if len(pushed_articles) != 1 else ''}* added to the Research Log"
+                        + (f" \u00b7 {skipped_count} below threshold" if skipped_count > 0 else ""),
             },
         },
         {"type": "divider"},
@@ -561,11 +522,11 @@ def send_slack_digest(pushed_articles, skipped_count):
         why = scoring.get("why_relevant", "")
 
         if score >= 9:
-            score_emoji = "🔥"
+            score_emoji = "\U0001f525"
         elif score >= 7:
-            score_emoji = "✅"
+            score_emoji = "\u2705"
         else:
-            score_emoji = "📄"
+            score_emoji = "\U0001f4c4"
 
         blocks.append({
             "type": "section",
@@ -573,9 +534,9 @@ def send_slack_digest(pushed_articles, skipped_count):
                 "type": "mrkdwn",
                 "text": (
                     f"{score_emoji} *<{article['url']}|{title}>*\n"
-                    f"Score: *{score}/10* · {tags}\n"
+                    f"Score: *{score}/10* \u00b7 {tags}\n"
                     f"_{key_stat}_\n"
-                    f"→ {why}"
+                    f"\u2192 {why}"
                 ),
             },
         })
@@ -585,14 +546,14 @@ def send_slack_digest(pushed_articles, skipped_count):
         "type": "context",
         "elements": [{
             "type": "mrkdwn",
-            "text": "Weekly review every Monday 7am AEST · All entries added to Notion",
+            "text": "Weekly review every Monday 7am AEST \u00b7 All entries added to Google Sheet",
         }],
     })
 
     try:
         response = requests.post(SLACK_WEBHOOK_URL, json={"blocks": blocks}, timeout=15)
         if response.status_code == 200:
-            print("  Slack digest sent ✓")
+            print("  Slack digest sent \u2713")
         else:
             print(f"  Slack error {response.status_code}: {response.text[:200]}")
     except Exception as e:
@@ -601,7 +562,7 @@ def send_slack_digest(pushed_articles, skipped_count):
 
 def main():
     print("=" * 60)
-    print(f"TULIP TREND SCOUT — {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    print(f"TULIP THE TREND SCOUT \u2014 {datetime.now().strftime('%Y-%m-%d %H:%M')}")
     print(f"Lookback: {LOOKBACK_DAYS} days | Threshold: {RELEVANCE_THRESHOLD}/10")
     print(f"Sources: {len(SOURCES)} | Max per run: {MAX_ARTICLES_PER_RUN}")
     print("=" * 60)
@@ -609,11 +570,18 @@ def main():
     if not ANTHROPIC_API_KEY:
         print("ERROR: ANTHROPIC_API_KEY not set.")
         return
-    if not NOTION_TOKEN:
-        print("ERROR: NOTION_TOKEN not set.")
+    if not GOOGLE_SHEETS_CREDENTIALS:
+        print("ERROR: GOOGLE_SHEETS_CREDENTIALS not set.")
         return
-    if not NOTION_DATABASE_ID:
-        print("ERROR: NOTION_DATABASE_ID not set.")
+    if not GOOGLE_SHEET_ID:
+        print("ERROR: GOOGLE_SHEET_ID not set.")
+        return
+
+    # Connect to Google Sheet
+    print("\nConnecting to Google Sheet...")
+    sheet = get_google_sheet()
+    if not sheet:
+        print("ERROR: Could not connect to Google Sheet. Check credentials and sharing.")
         return
 
     seen = load_seen_articles()
@@ -626,13 +594,13 @@ def main():
     pushed_articles = []
 
     for source in SOURCES:
-        print(f"\n{'─' * 50}")
+        print(f"\n{'=' * 50}")
         print(f"Source: {source['name']}")
         articles = fetch_articles_from_rss(source)
 
         for article in articles:
             if new_count >= MAX_ARTICLES_PER_RUN:
-                print(f"\n  Hit limit ({MAX_ARTICLES_PER_RUN}) — stopping")
+                print(f"\n  Hit limit ({MAX_ARTICLES_PER_RUN}) \u2014 stopping")
                 break
 
             article_id = make_article_id(article["url"])
@@ -658,14 +626,14 @@ def main():
             }
 
             if score >= RELEVANCE_THRESHOLD:
-                success = push_to_notion(article, scoring)
+                success = push_to_google_sheet(sheet, article, scoring)
                 if success:
                     pushed_count += 1
                     pushed_articles.append({"article": article, "scoring": scoring})
-                    print(f"  -> Notion ✓")
+                    print(f"  -> Google Sheet \u2713")
                 else:
                     error_count += 1
-                    print(f"  -> Notion ✗")
+                    print(f"  -> Google Sheet \u2717")
             else:
                 skipped_count += 1
                 print(f"  -> Below threshold, skipped")
@@ -677,15 +645,15 @@ def main():
 
     save_seen_articles(seen)
 
-    print(f"\n{'─' * 50}")
+    print(f"\n{'=' * 50}")
     print(f"Sending Slack digest...")
     send_slack_digest(pushed_articles, skipped_count)
 
     print(f"\n{'=' * 60}")
-    print(f"DONE — {new_count} new articles from {len(SOURCES)} sources")
-    print(f"  ✓ {pushed_count} pushed to Notion")
-    print(f"  ○ {skipped_count} below threshold")
-    print(f"  ✗ {error_count} errors")
+    print(f"DONE \u2014 {new_count} new articles from {len(SOURCES)} sources")
+    print(f"  \u2713 {pushed_count} pushed to Google Sheet")
+    print(f"  \u25cb {skipped_count} below threshold")
+    print(f"  \u2717 {error_count} errors")
     print(f"  Total tracked: {len(seen)}")
     print(f"{'=' * 60}")
 
