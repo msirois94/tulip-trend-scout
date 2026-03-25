@@ -29,7 +29,7 @@ from bs4 import BeautifulSoup
 # ╚══════════════════════════════════════════════════════════════════╝
 
 # How many days back to look for new articles (on each run)
-LOOKBACK_DAYS = 7
+LOOKBACK_DAYS = 14
 
 # Minimum relevance score (1–10) for an article to be pushed to Notion
 # Lower = more articles, higher = stricter filtering
