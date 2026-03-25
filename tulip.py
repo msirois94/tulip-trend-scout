@@ -5,6 +5,7 @@ This script runs daily via GitHub Actions. It:
 1. Checks your curated source list for new articles (via RSS feeds)
 2. Sends each new article to Claude for relevance scoring
 3. Pushes high-scoring entries into your Notion Research Hub
+4. Sends a Slack digest summarising what it found
 
 You don't need to understand the code — just follow the setup steps
 in the README. If you want to add a new source, scroll down to the
@@ -37,6 +38,9 @@ RELEVANCE_THRESHOLD = 6
 
 # Which Claude model to use (Haiku is cheapest, Sonnet is smarter)
 CLAUDE_MODEL = "claude-haiku-4-5-20251001"
+
+# Maximum number of articles to process per run (keeps API costs predictable)
+MAX_ARTICLES_PER_RUN = 30
 
 
 # ╔══════════════════════════════════════════════════════════════════╗
@@ -119,6 +123,24 @@ SOURCES = [
         "feed_url": "https://simonwillison.net/atom/everything/",
         "content_type": "Industry Articles & News",
     },
+    {
+        "name": "MIT Technology Review — AI",
+        "url": "https://www.technologyreview.com/topic/artificial-intelligence/",
+        "feed_url": "https://www.technologyreview.com/topic/artificial-intelligence/feed/",
+        "content_type": "Industry Articles & News",
+    },
+    {
+        "name": "VentureBeat AI",
+        "url": "https://venturebeat.com/category/ai/",
+        "feed_url": "https://venturebeat.com/category/ai/feed/",
+        "content_type": "Industry Articles & News",
+    },
+    {
+        "name": "The Verge — AI",
+        "url": "https://www.theverge.com/ai-artificial-intelligence",
+        "feed_url": "https://www.theverge.com/rss/ai-artificial-intelligence/index.xml",
+        "content_type": "Industry Articles & News",
+    },
 
     # ── AI vendor blogs (ecosystem moves) ─────────────────────────
     {
@@ -131,6 +153,12 @@ SOURCES = [
         "name": "OpenAI Blog",
         "url": "https://openai.com/blog",
         "feed_url": "https://openai.com/blog/rss.xml",
+        "content_type": "Industry Articles & News",
+    },
+    {
+        "name": "Google AI Blog",
+        "url": "https://blog.google/technology/ai/",
+        "feed_url": "https://blog.google/technology/ai/rss/",
         "content_type": "Industry Articles & News",
     },
 
@@ -147,14 +175,44 @@ SOURCES = [
         "feed_url": "https://www.membrane.io/blog/rss.xml",
         "content_type": "Competitor Update",
     },
-
-    # ── Hacker News — filtered to AI/agent/API topics ─────────────
-    # This feed pulls top HN stories matching these keywords.
-    # To change keywords, edit the query string in the URL.
     {
-        "name": "Hacker News — AI Agents & APIs",
+        "name": "Kong Blog",
+        "url": "https://konghq.com/blog",
+        "feed_url": "https://konghq.com/blog/feed",
+        "content_type": "Industry Articles & News",
+    },
+    {
+        "name": "Zapier Engineering Blog",
+        "url": "https://zapier.com/engineering",
+        "feed_url": "https://zapier.com/engineering/feeds/latest/",
+        "content_type": "Competitor Update",
+    },
+
+    # ── Hacker News — filtered by keyword ─────────────────────────
+    # Separate feeds because HN RSS treats multi-word queries as AND.
+    # Lower point thresholds = more results.
+    {
+        "name": "Hacker News — AI Agents",
         "url": "https://news.ycombinator.com",
-        "feed_url": "https://hnrss.org/newest?q=AI+agent+API+MCP&points=50",
+        "feed_url": "https://hnrss.org/newest?q=AI+agent&points=30",
+        "content_type": "Industry Articles & News",
+    },
+    {
+        "name": "Hacker News — MCP Protocol",
+        "url": "https://news.ycombinator.com",
+        "feed_url": "https://hnrss.org/newest?q=MCP+protocol&points=20",
+        "content_type": "Industry Articles & News",
+    },
+    {
+        "name": "Hacker News — API Gateway",
+        "url": "https://news.ycombinator.com",
+        "feed_url": "https://hnrss.org/newest?q=API+gateway&points=20",
+        "content_type": "Industry Articles & News",
+    },
+    {
+        "name": "Hacker News — iPaaS Integration",
+        "url": "https://news.ycombinator.com",
+        "feed_url": "https://hnrss.org/newest?q=iPaaS+integration&points=10",
         "content_type": "Industry Articles & News",
     },
 ]
@@ -192,6 +250,13 @@ SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL", "")
 # File to track which articles we've already processed
 SEEN_ARTICLES_FILE = "seen_articles.json"
 
+# Fake a normal browser so feeds don't block us
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                  "AppleWebKit/537.36 (KHTML, like Gecko) "
+                  "Chrome/120.0.0.0 Safari/537.36",
+}
+
 
 def load_seen_articles():
     """Load the list of articles we've already processed."""
@@ -212,62 +277,130 @@ def make_article_id(url):
     return hashlib.md5(url.encode()).hexdigest()[:12]
 
 
+def get_entry_date(entry):
+    """
+    Try every common date field to extract a publish date.
+    Returns a datetime or None if no date can be determined.
+    """
+    for attr in ["published_parsed", "updated_parsed", "created_parsed"]:
+        parsed = getattr(entry, attr, None)
+        if parsed:
+            try:
+                return datetime(*parsed[:6])
+            except (TypeError, ValueError):
+                continue
+
+    for attr in ["published", "updated", "created", "dc_date"]:
+        raw = getattr(entry, attr, None)
+        if raw:
+            for fmt in [
+                "%Y-%m-%dT%H:%M:%S",
+                "%Y-%m-%dT%H:%M:%SZ",
+                "%Y-%m-%dT%H:%M:%S%z",
+                "%a, %d %b %Y %H:%M:%S %z",
+                "%a, %d %b %Y %H:%M:%S %Z",
+                "%Y-%m-%d %H:%M:%S",
+                "%Y-%m-%d",
+            ]:
+                try:
+                    dt = datetime.strptime(raw[:25].strip(), fmt)
+                    return dt.replace(tzinfo=None)
+                except (ValueError, TypeError):
+                    continue
+
+    return None
+
+
 def fetch_articles_from_rss(source):
     """
-    Check an RSS feed for new articles published in the last few days.
-    Returns a list of articles with their title, URL, and summary.
+    Check an RSS feed for new articles.
+    Now with detailed logging and forgiving date handling.
     """
     articles = []
     feed_url = source.get("feed_url")
 
     if not feed_url:
+        print(f"  No feed URL configured — skipping")
         return articles
 
     try:
-        feed = feedparser.parse(feed_url)
+        # Fetch with browser headers (some feeds block default user-agents)
+        response = requests.get(feed_url, headers=HEADERS, timeout=15)
+        print(f"  HTTP {response.status_code} | {len(response.content)} bytes")
+
+        if response.status_code != 200:
+            print(f"  Non-200 status — skipping")
+            return articles
+
+        feed = feedparser.parse(response.content)
+
+        if feed.bozo and not feed.entries:
+            print(f"  Feed parse error: {feed.bozo_exception}")
+            return articles
+
+        total_entries = len(feed.entries)
+        print(f"  {total_entries} entries in feed")
+
+        if total_entries == 0:
+            return articles
+
         cutoff = datetime.now() - timedelta(days=LOOKBACK_DAYS)
+        accepted = 0
+        too_old = 0
+        no_date = 0
 
-        for entry in feed.entries[:15]:  # Check the 15 most recent
-            # Try to get the published date
-            published = None
-            if hasattr(entry, "published_parsed") and entry.published_parsed:
-                published = datetime(*entry.published_parsed[:6])
-            elif hasattr(entry, "updated_parsed") and entry.updated_parsed:
-                published = datetime(*entry.updated_parsed[:6])
+        for entry in feed.entries[:20]:
+            title = entry.get("title", "Untitled")
+            url = entry.get("link", "")
 
-            # If we can't determine the date, include it anyway
-            # (better to check than miss something)
-            if published and published < cutoff:
+            if not url:
                 continue
 
-            # Extract a summary/description
+            published = get_entry_date(entry)
+
+            if published:
+                if published < cutoff:
+                    too_old += 1
+                    continue
+            else:
+                # No date — include it anyway, better safe than sorry
+                no_date += 1
+
             summary = ""
-            if hasattr(entry, "summary"):
-                # Strip HTML tags from the summary
-                soup = BeautifulSoup(entry.summary, "html.parser")
-                summary = soup.get_text()[:500]
-            elif hasattr(entry, "description"):
-                soup = BeautifulSoup(entry.description, "html.parser")
-                summary = soup.get_text()[:500]
+            for field in ["summary", "description", "content"]:
+                raw = getattr(entry, field, None)
+                if raw:
+                    if isinstance(raw, list):
+                        raw = raw[0].get("value", "") if raw else ""
+                    soup = BeautifulSoup(str(raw), "html.parser")
+                    summary = soup.get_text()[:500]
+                    if summary:
+                        break
 
             articles.append({
-                "title": entry.get("title", "Untitled"),
-                "url": entry.get("link", ""),
+                "title": title,
+                "url": url,
                 "summary": summary,
                 "source_name": source["name"],
                 "content_type": source["content_type"],
             })
+            accepted += 1
 
+        print(f"  Result: {accepted} accepted, {too_old} too old, {no_date} no date (included)")
+
+    except requests.exceptions.Timeout:
+        print(f"  Timed out — skipping")
+    except requests.exceptions.ConnectionError as e:
+        print(f"  Connection error: {str(e)[:100]}")
     except Exception as e:
-        print(f"  Warning: Could not fetch feed for {source['name']}: {e}")
+        print(f"  Error: {type(e).__name__}: {str(e)[:100]}")
 
     return articles
 
 
 def score_with_claude(article):
     """
-    Send an article to Claude and ask it to score relevance
-    and extract key information for the Research Hub.
+    Send an article to Claude for relevance scoring.
     """
     prompt = f"""You are a research assistant for Pontil, a B2B SaaS infrastructure company.
 
@@ -280,7 +413,7 @@ Score this article's relevance to Pontil (1–10) and extract key information.
 Article title: {article['title']}
 Source: {article['source_name']}
 URL: {article['url']}
-Summary: {article['summary']}
+Summary: {article['summary'][:400]}
 
 Respond with ONLY valid JSON (no markdown, no backticks, no explanation) in this exact format:
 {{
@@ -318,10 +451,7 @@ Pick the top 2–3 most relevant tags. Be selective — don't tag everything."""
 
         data = response.json()
         text = data["content"][0]["text"].strip()
-
-        # Clean up any markdown fences Claude might add
         text = text.replace("```json", "").replace("```", "").strip()
-
         result = json.loads(text)
         return result
 
@@ -337,32 +467,18 @@ def push_to_notion(article, scoring):
     """
     Create a new entry in the Notion Research Hub database.
     """
-    # Build the topic tags as multi-select values
     tags = [{"name": tag} for tag in scoring.get("topic_tags", [])]
 
-    # Build the Notion page properties to match the Research Hub schema
     properties = {
         "Title": {
             "title": [{"text": {"content": scoring.get("suggested_title", article["title"])}}]
         },
-        "URL": {
-            "url": article["url"]
-        },
-        "Content Type": {
-            "select": {"name": article["content_type"]}
-        },
-        "Topic Tag": {
-            "multi_select": tags
-        },
-        "Who Added": {
-            "rich_text": [{"text": {"content": "Tulip (auto)"}}]
-        },
-        "Date Added": {
-            "date": {"start": datetime.now().strftime("%Y-%m-%d")}
-        },
-        "Newsletter Ready": {
-            "checkbox": False
-        },
+        "URL": {"url": article["url"]},
+        "Content Type": {"select": {"name": article["content_type"]}},
+        "Topic Tag": {"multi_select": tags},
+        "Who Added": {"rich_text": [{"text": {"content": "Tulip (auto)"}}]},
+        "Date Added": {"date": {"start": datetime.now().strftime("%Y-%m-%d")}},
+        "Newsletter Ready": {"checkbox": False},
         "Key Quote / Stat": {
             "rich_text": [{"text": {"content": scoring.get("key_quote_or_stat", "")[:2000]}}]
         },
@@ -389,7 +505,7 @@ def push_to_notion(article, scoring):
         if response.status_code == 200:
             return True
         else:
-            print(f"  Notion API error {response.status_code}: {response.text[:300]}")
+            print(f"  Notion error {response.status_code}: {response.text[:300]}")
             return False
 
     except Exception as e:
@@ -399,28 +515,23 @@ def push_to_notion(article, scoring):
 
 def send_slack_digest(pushed_articles, skipped_count):
     """
-    Send a formatted digest to Slack summarising what Tulip found today.
-    Each article shows its score, tags, key stat, and a link.
-    Only sends if there are articles to report (no spam on quiet days).
+    Send a formatted digest to Slack.
+    Only sends if there are articles to report.
     """
     if not SLACK_WEBHOOK_URL:
-        print("  Slack webhook not configured — skipping notification")
+        print("  Slack webhook not configured — skipping")
         return
 
     if not pushed_articles and skipped_count == 0:
-        print("  No new articles today — skipping Slack notification")
+        print("  No new articles — skipping Slack notification")
         return
 
     today = datetime.now().strftime("%A %-d %B %Y")
 
-    # Build the message blocks
     blocks = [
         {
             "type": "header",
-            "text": {
-                "type": "plain_text",
-                "text": f"🌷 Tulip Trend Scout — {today}",
-            },
+            "text": {"type": "plain_text", "text": f"🌷 Tulip Trend Scout — {today}"},
         },
         {
             "type": "section",
@@ -433,7 +544,6 @@ def send_slack_digest(pushed_articles, skipped_count):
         {"type": "divider"},
     ]
 
-    # Add a block for each pushed article
     for item in pushed_articles:
         article = item["article"]
         scoring = item["scoring"]
@@ -443,7 +553,6 @@ def send_slack_digest(pushed_articles, skipped_count):
         key_stat = scoring.get("key_quote_or_stat", "")
         why = scoring.get("why_relevant", "")
 
-        # Score emoji — visual at-a-glance indicator
         if score >= 9:
             score_emoji = "🔥"
         elif score >= 7:
@@ -464,87 +573,76 @@ def send_slack_digest(pushed_articles, skipped_count):
             },
         })
 
-    # Add a footer
     blocks.append({"type": "divider"})
     blocks.append({
         "type": "context",
-        "elements": [
-            {
-                "type": "mrkdwn",
-                "text": "Tulip runs daily at 7am AEST · All entries added to Notion with Newsletter Ready unchecked · React with 👍 to flag for Matty",
-            }
-        ],
+        "elements": [{
+            "type": "mrkdwn",
+            "text": "Tulip runs daily at 7am AEST · All entries added to Notion with Newsletter Ready unchecked · React with 👍 to flag for Matty",
+        }],
     })
 
     try:
-        response = requests.post(
-            SLACK_WEBHOOK_URL,
-            json={"blocks": blocks},
-            timeout=15,
-        )
+        response = requests.post(SLACK_WEBHOOK_URL, json={"blocks": blocks}, timeout=15)
         if response.status_code == 200:
-            print("  Slack digest sent successfully")
+            print("  Slack digest sent ✓")
         else:
             print(f"  Slack error {response.status_code}: {response.text[:200]}")
     except Exception as e:
-        print(f"  Error sending Slack digest: {e}")
+        print(f"  Slack error: {e}")
 
 
 def main():
-    """
-    Main function — runs once per execution.
-    Checks all sources, scores new articles, pushes good ones to Notion,
-    then sends a Slack digest with everything it found.
-    """
     print("=" * 60)
     print(f"TULIP TREND SCOUT — {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    print(f"Lookback: {LOOKBACK_DAYS} days | Threshold: {RELEVANCE_THRESHOLD}/10")
+    print(f"Sources: {len(SOURCES)} | Max per run: {MAX_ARTICLES_PER_RUN}")
     print("=" * 60)
 
-    # Check we have the required secrets
     if not ANTHROPIC_API_KEY:
-        print("ERROR: ANTHROPIC_API_KEY not set. Add it to GitHub Secrets.")
+        print("ERROR: ANTHROPIC_API_KEY not set.")
         return
     if not NOTION_TOKEN:
-        print("ERROR: NOTION_TOKEN not set. Add it to GitHub Secrets.")
+        print("ERROR: NOTION_TOKEN not set.")
         return
     if not NOTION_DATABASE_ID:
-        print("ERROR: NOTION_DATABASE_ID not set. Add it to GitHub Secrets.")
+        print("ERROR: NOTION_DATABASE_ID not set.")
         return
 
-    # Load articles we've already seen
     seen = load_seen_articles()
+    print(f"Previously seen: {len(seen)} articles")
+
     new_count = 0
     pushed_count = 0
     skipped_count = 0
-    pushed_articles = []  # Collect these for the Slack digest
+    error_count = 0
+    pushed_articles = []
 
-    # Check each source
     for source in SOURCES:
-        print(f"\nChecking: {source['name']}")
+        print(f"\n{'─' * 50}")
+        print(f"Source: {source['name']}")
         articles = fetch_articles_from_rss(source)
-        print(f"  Found {len(articles)} recent articles")
 
         for article in articles:
-            article_id = make_article_id(article["url"])
+            if new_count >= MAX_ARTICLES_PER_RUN:
+                print(f"\n  Hit limit ({MAX_ARTICLES_PER_RUN}) — stopping")
+                break
 
-            # Skip articles we've already processed
+            article_id = make_article_id(article["url"])
             if article_id in seen:
                 continue
 
             new_count += 1
-            print(f"  NEW: {article['title'][:60]}...")
+            print(f"  NEW: {article['title'][:70]}...")
 
-            # Score with Claude
             scoring = score_with_claude(article)
-
             if scoring is None:
-                print(f"  Could not score — skipping")
+                error_count += 1
                 continue
 
             score = scoring.get("relevance_score", 0)
             print(f"  Score: {score}/10 | Tags: {', '.join(scoring.get('topic_tags', []))}")
 
-            # Mark as seen regardless of score (so we don't re-check)
             seen[article_id] = {
                 "title": article["title"],
                 "url": article["url"],
@@ -552,35 +650,36 @@ def main():
                 "date": datetime.now().strftime("%Y-%m-%d"),
             }
 
-            # Only push to Notion if the score meets the threshold
             if score >= RELEVANCE_THRESHOLD:
                 success = push_to_notion(article, scoring)
                 if success:
                     pushed_count += 1
                     pushed_articles.append({"article": article, "scoring": scoring})
-                    print(f"  -> Pushed to Notion")
+                    print(f"  -> Notion ✓")
                 else:
-                    print(f"  -> Failed to push to Notion")
+                    error_count += 1
+                    print(f"  -> Notion ✗")
             else:
                 skipped_count += 1
-                print(f"  -> Below threshold ({RELEVANCE_THRESHOLD}), skipped")
+                print(f"  -> Below threshold, skipped")
 
-            # Small delay to avoid rate limiting
             time.sleep(1)
 
-    # Save what we've seen
+        if new_count >= MAX_ARTICLES_PER_RUN:
+            break
+
     save_seen_articles(seen)
 
-    # Send Slack digest
-    print(f"\nSending Slack digest...")
+    print(f"\n{'─' * 50}")
+    print(f"Sending Slack digest...")
     send_slack_digest(pushed_articles, skipped_count)
 
-    # Summary
     print(f"\n{'=' * 60}")
-    print(f"DONE — {new_count} new articles found")
-    print(f"  {pushed_count} pushed to Notion")
-    print(f"  {skipped_count} below relevance threshold")
-    print(f"  {len(seen)} total articles tracked")
+    print(f"DONE — {new_count} new articles from {len(SOURCES)} sources")
+    print(f"  ✓ {pushed_count} pushed to Notion")
+    print(f"  ○ {skipped_count} below threshold")
+    print(f"  ✗ {error_count} errors")
+    print(f"  Total tracked: {len(seen)}")
     print(f"{'=' * 60}")
 
 
