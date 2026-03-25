@@ -34,7 +34,7 @@ LOOKBACK_DAYS = 14
 
 # Minimum relevance score (1–10) for an article to be pushed to Notion
 # Lower = more articles, higher = stricter filtering
-RELEVANCE_THRESHOLD = 4
+RELEVANCE_THRESHOLD = 6
 
 # Which Claude model to use (Haiku is cheapest, Sonnet is smarter)
 CLAUDE_MODEL = "claude-haiku-4-5-20251001"
@@ -578,7 +578,7 @@ def send_slack_digest(pushed_articles, skipped_count):
         "type": "context",
         "elements": [{
             "type": "mrkdwn",
-            "text": "Tulip runs daily at 7am AEST · All entries added to Notion with Newsletter Ready unchecked · React with 👍 to flag for Matty",
+            "text": "Tulip the Trend Scout · Weekly review every Monday 7am AEST · All entries added to Notion · React with 👍 to flag for Matty",
         }],
     })
 
