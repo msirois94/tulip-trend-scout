@@ -29,7 +29,7 @@ from bs4 import BeautifulSoup
 # ╚══════════════════════════════════════════════════════════════════╝
 
 # How many days back to look for new articles (on each run)
-LOOKBACK_DAYS = 3
+LOOKBACK_DAYS = 7
 
 # Minimum relevance score (1–10) for an article to be pushed to Notion
 # Lower = more articles, higher = stricter filtering
@@ -50,6 +50,7 @@ CLAUDE_MODEL = "claude-haiku-4-5-20251001"
 # ╚══════════════════════════════════════════════════════════════════╝
 
 SOURCES = [
+    # ── Original Pontil Research Hub sources ──────────────────────
     {
         "name": "The Pragmatic Engineer",
         "url": "https://newsletter.pragmaticengineer.com",
@@ -90,6 +91,70 @@ SOURCES = [
         "name": "MuleSoft Blog",
         "url": "https://blogs.mulesoft.com",
         "feed_url": "https://blogs.mulesoft.com/feed/",
+        "content_type": "Industry Articles & News",
+    },
+
+    # ── High-volume AI & infrastructure sources ───────────────────
+    {
+        "name": "TechCrunch AI",
+        "url": "https://techcrunch.com/category/artificial-intelligence/",
+        "feed_url": "https://techcrunch.com/category/artificial-intelligence/feed/",
+        "content_type": "Industry Articles & News",
+    },
+    {
+        "name": "The New Stack",
+        "url": "https://thenewstack.io",
+        "feed_url": "https://thenewstack.io/feed/",
+        "content_type": "Industry Articles & News",
+    },
+    {
+        "name": "InfoQ — AI/ML & Data Engineering",
+        "url": "https://www.infoq.com/ai-ml-data-eng/",
+        "feed_url": "https://feed.infoq.com/ai-ml-data-eng/",
+        "content_type": "Industry Articles & News",
+    },
+    {
+        "name": "Simon Willison's Weblog",
+        "url": "https://simonwillison.net",
+        "feed_url": "https://simonwillison.net/atom/everything/",
+        "content_type": "Industry Articles & News",
+    },
+
+    # ── AI vendor blogs (ecosystem moves) ─────────────────────────
+    {
+        "name": "Anthropic Blog",
+        "url": "https://www.anthropic.com/news",
+        "feed_url": "https://www.anthropic.com/rss.xml",
+        "content_type": "Industry Articles & News",
+    },
+    {
+        "name": "OpenAI Blog",
+        "url": "https://openai.com/blog",
+        "feed_url": "https://openai.com/blog/rss.xml",
+        "content_type": "Industry Articles & News",
+    },
+
+    # ── API infrastructure & competitor sources ───────────────────
+    {
+        "name": "Postman Blog",
+        "url": "https://blog.postman.com",
+        "feed_url": "https://blog.postman.com/feed/",
+        "content_type": "Industry Articles & News",
+    },
+    {
+        "name": "Membrane Blog",
+        "url": "https://www.membrane.io/blog",
+        "feed_url": "https://www.membrane.io/blog/rss.xml",
+        "content_type": "Competitor Update",
+    },
+
+    # ── Hacker News — filtered to AI/agent/API topics ─────────────
+    # This feed pulls top HN stories matching these keywords.
+    # To change keywords, edit the query string in the URL.
+    {
+        "name": "Hacker News — AI Agents & APIs",
+        "url": "https://news.ycombinator.com",
+        "feed_url": "https://hnrss.org/newest?q=AI+agent+API+MCP&points=50",
         "content_type": "Industry Articles & News",
     },
 ]
