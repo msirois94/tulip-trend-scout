@@ -2,7 +2,7 @@ name: Tulip the Trend Scout
 
 on:
   schedule:
-    - cron: '0 21 * * *'
+    - cron: '0 21 * * 1'
   workflow_dispatch:
 
 jobs:
@@ -43,3 +43,15 @@ jobs:
         with:
           path: seen_articles.json
           key: seen-articles-v4-${{ github.run_number }}
+```
+
+The only difference is `'0 21 * * 1'` — that `1` at the end means Monday only.
+
+For the **Slack footer** in `tulip.py`, open the file → pencil icon → find this line:
+```
+"text": "Tulip runs daily at 7am AEST · All entries added to Notion with Newsletter Ready unchecked · React with 👍 to flag for Matty",
+```
+
+Replace it with:
+```
+"text": "Tulip the Trend Scout · Weekly review every Monday 7am AEST · All entries added to Notion · React with 👍 to flag for Matty",
